@@ -4,7 +4,6 @@
 static void 
 pipeprimes(int *fd)
 {
-    // printf("pid:%d, read from: %d\n", getpid(), fd);
     close(fd[1]);
     int n;
     if (read(fd[0], &n, sizeof(n)) <= 0) {
