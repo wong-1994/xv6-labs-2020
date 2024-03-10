@@ -150,6 +150,7 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  p->tmask = 0;
 }
 
 // Create a user page table for a given process,
@@ -230,6 +231,8 @@ userinit(void)
 
   p->state = RUNNABLE;
 
+  p->tmask = 0;
+
   release(&p->lock);
 }
 
@@ -279,6 +282,9 @@ fork(void)
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
+
+  // copy trace mask from parent to child
+  np->tmask = p->tmask;
 
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
