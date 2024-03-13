@@ -699,3 +699,15 @@ procdump(void)
     printf("\n");
   }
 }
+
+uint64 countproc(void)
+{
+  struct proc *p;
+  uint64 procnum = 0;
+
+  for(p = proc; p < &proc[NPROC]; p++) {
+    procnum++;
+  }
+  
+  return procnum;
+}
