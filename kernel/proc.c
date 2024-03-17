@@ -706,7 +706,8 @@ uint64 countproc(void)
   uint64 procnum = 0;
 
   for(p = proc; p < &proc[NPROC]; p++) {
-    procnum++;
+    if (p->state != UNUSED)
+      procnum++;
   }
   
   return procnum;
