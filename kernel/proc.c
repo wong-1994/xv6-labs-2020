@@ -20,6 +20,7 @@ static void wakeup1(struct proc *chan);
 static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
+extern pagetable_t kernel_pagetable;
 
 // initialize the proc table at boot time.
 void
@@ -115,11 +116,15 @@ found:
 
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
-  if(p->pagetable == 0){
+  // Kernel page table. 
+  p->kpagetable = proc_kpagetable();
+
+  if((p->pagetable == 0) || (p->kpagetable == 0)){
     freeproc(p);
     release(&p->lock);
     return 0;
   }
+
 
   // Set up new context to start executing at forkret,
   // which returns to user space.
@@ -141,6 +146,8 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  if(p->kpagetable)
+    proc_freekpagetable(p->kpagetable);
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -159,7 +166,7 @@ proc_pagetable(struct proc *p)
 {
   pagetable_t pagetable;
 
-  // An empty page table.
+  // An empty user page table.
   pagetable = uvmcreate();
   if(pagetable == 0)
     return 0;
@@ -185,6 +192,21 @@ proc_pagetable(struct proc *p)
   return pagetable;
 }
 
+// // Create a kernel page table for a given process,
+// // with no user memory, but with other kernel pages.
+pagetable_t
+proc_kpagetable()
+{
+  pagetable_t pagetable;
+
+  // An new kernel page table.
+  pagetable = skvmcreate();
+  if(pagetable == 0)
+    return 0;
+
+  return pagetable;
+}
+
 // Free a process's page table, and free the
 // physical memory it refers to.
 void
@@ -193,6 +215,25 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
   uvmfree(pagetable, sz);
+}
+
+// Free a process's kernel page table, the process's
+// seperate physical memory should be already freed
+void
+proc_freekpagetable(pagetable_t kpagetable)
+{
+  pte_t pte1 = kpagetable[0];
+  pagetable_t level1 = (pagetable_t)PTE2PA(pte1);
+  for(int i = 0; i < 512; i++){
+    pte_t pte0 = level1[i];
+    if((pte0 & PTE_V) && (pte0 & (PTE_R|PTE_W|PTE_X)) == 0){
+      // this PTE points to a lower-level page table.
+      pagetable_t level0 = (pagetable_t)PTE2PA(pte0);
+      kfree((void*)level0);
+    }
+  }
+  kfree((void*)level1);
+  kfree((void*)kpagetable);
 }
 
 // a user program that calls exec("/init")
@@ -230,6 +271,8 @@ userinit(void)
 
   p->state = RUNNABLE;
 
+  kvmmapuser(p->pagetable, p->kpagetable, 0, p->sz);
+
   release(&p->lock);
 }
 
@@ -249,7 +292,9 @@ growproc(int n)
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
+  kvmmapuser(p->pagetable, p->kpagetable, p->sz, sz);
   p->sz = sz;
+
   return 0;
 }
 
@@ -294,6 +339,8 @@ fork(void)
   pid = np->pid;
 
   np->state = RUNNABLE;
+
+  kvmmapuser(np->pagetable, np->kpagetable, 0, np->sz);
 
   release(&np->lock);
 
@@ -473,11 +520,18 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+        w_satp(MAKE_SATP(p->kpagetable));
+        sfence_vma();
+
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
+
+        w_satp(MAKE_SATP(kernel_pagetable));
+        sfence_vma();
 
         found = 1;
       }
