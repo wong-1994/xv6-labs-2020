@@ -127,6 +127,12 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  // Set up new alarminfo for sigalarm.
+  memset(&p->alarminfo, 0, sizeof(p->alarminfo));
+  p->alarminfo.curtick = 0;
+  p->alarminfo.period = 0;
+  p->alarminfo.handleraddr = 0xFFFFFFFFFFFFFFFF;
+
   return p;
 }
 
@@ -696,4 +702,15 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+int
+savealarm(int ticks, uint64 handleraddr)
+{
+  struct proc *p = myproc();
+  p->alarminfo.curtick = 0;
+  p->alarminfo.period = ticks;
+  p->alarminfo.handleraddr = handleraddr;
+
+  return 0;
 }
