@@ -30,14 +30,20 @@ trapinithart(void)
 }
 
 static void 
-updatealarminfo(struct proc *p)
+operatebyalarm(struct proc *p)
 {
-  if (p->alarminfo.period == 0) {
+  // If hstate is BUSY, curtick won't increase and kerenl will try
+  // calling alarm handler again next tick
+  if (p->alarminfo.period == 0 || p->alarminfo.hstate == BUSY) {
     return;
   }
 
   p->alarminfo.curtick += 1;
-  if (((p->alarminfo.curtick) % (p->alarminfo.period)) == 0) {
+  (p->alarminfo.curtick) %= (p->alarminfo.period);
+
+  if (p->alarminfo.curtick == 0 && p->alarminfo.hstate == FREE) {
+    p->alarminfo.hstate = BUSY;
+    *p->trapframebak = *p->trapframe;
     p->trapframe->epc = p->alarminfo.handleraddr;
   }
   return;
@@ -92,7 +98,7 @@ usertrap(void)
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2) {
-    updatealarminfo(p);
+    operatebyalarm(p);
     yield();
   }
 

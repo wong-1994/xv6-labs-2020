@@ -82,11 +82,14 @@ struct trapframe {
 
 enum procstate { UNUSED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+enum handlestate { FREE, BUSY };
+
 // from sys_sigalarm.
 struct alarminfo {
   int curtick;
   int period;
   uint64 handleraddr;
+  enum handlestate hstate;
 };
 
 // Per-process state
@@ -111,4 +114,5 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
   struct alarminfo alarminfo;  // Info saved from sys_sigalarm for periodically call certain func
+  struct trapframe *trapframebak; // Backup trapframe; used after call back and restore original trapframe
 };
