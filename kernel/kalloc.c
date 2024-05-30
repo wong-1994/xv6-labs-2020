@@ -9,6 +9,11 @@
 #include "riscv.h"
 #include "defs.h"
 
+/*
+ * reference count for physical pages.
+ */
+uint8 cow_page_refcount[NPAGES] = {0};
+
 void freerange(void *pa_start, void *pa_end);
 
 extern char end[]; // first address after kernel.
@@ -39,6 +44,19 @@ freerange(void *pa_start, void *pa_end)
     kfree(p);
 }
 
+void
+kcowincre(uint64 pa)
+{
+  if(pa > MAXVA)
+    panic("kcowincre: physical addr too large");
+  acquire(&kmem.lock);
+  uint16 idx = ((uint64)pa-KERNBASE)/PGSIZE;
+  if(idx < 0)
+    panic("kcowincre: ref count index");
+  cow_page_refcount[idx]++;
+  release(&kmem.lock);
+}
+
 // Free the page of physical memory pointed at by v,
 // which normally should have been returned by a
 // call to kalloc().  (The exception is when
@@ -50,6 +68,16 @@ kfree(void *pa)
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
+
+  acquire(&kmem.lock);
+  uint16 idx = ((uint64)pa-KERNBASE)/PGSIZE;
+  if(idx < 0)
+    panic("uvmunmap: ref count index");
+  uint8 cnt = cow_page_refcount[idx];
+  cow_page_refcount[idx]--;
+  release(&kmem.lock);
+  if(cnt > 1)
+    return;
 
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
@@ -72,8 +100,13 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r)
+  if(r) {
     kmem.freelist = r->next;
+    uint64 idx = ((uint64)r-KERNBASE)/PGSIZE;
+    if (idx < 0)
+      panic("kalloc: Wrong ref count index");
+    cow_page_refcount[idx] = 1;
+  }
   release(&kmem.lock);
 
   if(r)
