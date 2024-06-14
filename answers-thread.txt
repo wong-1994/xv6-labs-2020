@@ -1,0 +1,1 @@
+When different threads try to insert an entry in the same linked list(table[i]), linked list's head could be missing.
