@@ -4,6 +4,7 @@
 
 #define ROOTINO  1   // root i-number
 #define BSIZE 1024  // block size
+#define BNUM 107 // bucket num for bcache
 
 // Disk layout:
 // [ boot block | super block | log | inode blocks |
