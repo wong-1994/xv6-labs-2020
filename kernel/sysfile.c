@@ -300,8 +300,6 @@ sys_symlink(void)
     return -1;
   }
 
-  ilock(ip);
-
   if(writei(ip, 0, (uint64)target, 0, MAXPATH) != MAXPATH) {
     iunlock(ip);
     end_op();
@@ -311,6 +309,42 @@ sys_symlink(void)
   iunlock(ip);
   end_op();
   return 0;
+}
+
+// ip should already be locked
+static struct inode*
+followlink(struct inode* ip, uint count)
+{
+  char path[MAXPATH];
+
+  if(ip == 0 || !holdingsleep(&ip->lock) || ip->ref < 1)
+    panic("followlink: lock error");
+ 
+  if(count > 10) {
+    iunlockput(ip);
+    return 0;
+  }
+  count++;
+
+  // if (ip == 0)
+  //   return 0;
+
+  if(ip->type == T_FILE)
+    return ip;
+
+  if(ip->type != T_SYMLINK)
+    panic("followlink: wrong type");
+
+  if(readi(ip, 0, (uint64)path, 0, MAXPATH) != MAXPATH)
+    panic("followlink: readi");
+  
+  iunlockput(ip);
+
+  if((ip = namei(path)) == 0)
+    return 0;
+
+  ilock(ip);
+  return followlink(ip, count);
 }
 
 uint64
@@ -350,6 +384,14 @@ sys_open(void)
     iunlockput(ip);
     end_op();
     return -1;
+  }
+
+  if(ip->type == T_SYMLINK && (!(omode & O_NOFOLLOW))) {
+    ip = followlink(ip, 0);
+    if (ip == 0) {
+      end_op();
+      return -1;   
+    }
   }
 
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
