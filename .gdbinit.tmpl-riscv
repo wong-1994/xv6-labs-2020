@@ -4,4 +4,7 @@ target remote localhost:28333
 symbol-file kernel/kernel
 set disassemble-next-line auto
 set riscv use-compressed-breakpoints yes
+set follow-fork-mode child
+set detach-on-fork off
+b sysfile.c:297
 b fs.c:263

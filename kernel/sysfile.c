@@ -301,12 +301,12 @@ sys_symlink(void)
   }
 
   if(writei(ip, 0, (uint64)target, 0, MAXPATH) != MAXPATH) {
-    iunlock(ip);
+    iunlockput(ip);
     end_op();
     return -1;
   }
 
-  iunlock(ip);
+  iunlockput(ip);
   end_op();
   return 0;
 }
@@ -325,9 +325,6 @@ followlink(struct inode* ip, uint count)
     return 0;
   }
   count++;
-
-  // if (ip == 0)
-  //   return 0;
 
   if(ip->type == T_FILE)
     return ip;
