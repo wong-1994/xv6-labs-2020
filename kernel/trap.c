@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
+#include "fcntl.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -27,6 +31,53 @@ void
 trapinithart(void)
 {
   w_stvec((uint64)kernelvec);
+}
+
+static void
+pagefaulthandlemmap(void)
+{
+  struct proc *p = myproc();
+  uint64 va = r_stval();
+  int perm;
+
+  if(va >= p->sz || va < PGROUNDDOWN(p->trapframe->sp)) {
+    p->killed = 1;
+    return;
+  }
+
+  va = PGROUNDDOWN(va);
+  for(int i = 0; i < 16; ++i){
+    if(!p->vmas[i].valid)
+      continue;
+    if(p->vmas[i].addr > va || p->vmas[i].addr + p->vmas[i].length <= va)
+      continue;
+    
+    char *pa = kalloc();
+    if(pa == 0) {
+      p->killed = 1;
+      return;
+    }
+    memset(pa, 0, PGSIZE);
+
+    perm = PTE_U;
+    if(p->vmas[i].prot & PROT_READ)
+      perm |= PTE_R;
+    if(p->vmas[i].prot & PROT_WRITE)
+      perm |= PTE_W;
+    if(mappages(p->pagetable, va, PGSIZE, (uint64)pa, perm) != 0){
+      kfree(pa);
+      p->killed = 1;
+      return;
+    }
+
+    ilock(p->vmas[i].f->ip);
+    readi(p->vmas[i].f->ip, 0, (uint64)pa, va - p->vmas[i].addr, PGSIZE);
+    iunlock(p->vmas[i].f->ip);
+    return;
+  }
+
+  p->killed = 1;
+  return;
 }
 
 //
@@ -65,6 +116,8 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if (r_scause() == 13 || r_scause() == 15) {
+    pagefaulthandlemmap();
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {

@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
+#include "fcntl.h"
 
 struct cpu cpus[NCPU];
 
@@ -48,6 +52,9 @@ procinit(void)
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
       p->kstack = KSTACK((int) (p - proc));
+      for (int i = 0; i < 16; i++){
+        p->vmas[i].valid = 0;
+      }
   }
 }
 
@@ -296,6 +303,21 @@ fork(void)
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
 
+  // copy parent's mmaped-region
+  for(int i = 0; i < 16; i++){
+    if(!p->vmas[i].valid)
+      continue;
+
+    np->vmas[i].valid = 1;
+    np->vmas[i].addr = p->vmas[i].addr;
+    np->vmas[i].length = p->vmas[i].length;
+    np->vmas[i].prot = p->vmas[i].prot;
+    np->vmas[i].flags = p->vmas[i].flags;
+    np->vmas[i].f = p->vmas[i].f;
+    if(np->vmas[i].f)
+      filedup(np->vmas[i].f);
+  }
+
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
@@ -343,6 +365,29 @@ exit(int status)
 
   if(p == initproc)
     panic("init exiting");
+
+  // unmap all the mmap-ed region
+  for (int i = 0; i < 16; ++i) {
+    if(!p->vmas[i].valid)
+      continue;
+    if(p->vmas[i].flags == MAP_SHARED && p->vmas[i].f->writable) {
+      begin_op();
+      ilock(p->vmas[i].f->ip);
+      writei(p->vmas[i].f->ip, 1, p->vmas[i].addr, 0, p->vmas[i].length);
+      iunlock(p->vmas[i].f->ip);
+      end_op();
+    }
+    for(int cur = p->vmas[i].addr; cur < p->vmas[i].addr + p->vmas[i].length; cur += PGSIZE){
+      uvmunmap(p->pagetable, cur, 1, 1);
+    }
+    p->vmas[i].valid = 0;
+    p->vmas[i].addr = 0;
+    p->vmas[i].length = 0;
+    p->vmas[i].prot = 0;
+    p->vmas[i].flags = 0;
+    fileclose(p->vmas[i].f);
+    p->vmas[i].f = 0;
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){

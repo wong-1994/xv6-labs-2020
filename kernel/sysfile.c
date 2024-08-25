@@ -484,3 +484,88 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64
+sys_mmap(void)
+{
+  uint64 addr;
+  int length, prot, flags, offset;
+  struct file *f;
+
+  if(argaddr(0, &addr) < 0 || argint(1, &length) < 0 || argint(2, &prot) < 0 || 
+    argint(3, &flags) < 0 || argfd(4, 0, &f) < 0 || argint(5, &offset) < 0){
+    return -1;
+  }
+  // Expecting addr and offset are both 0
+  if(addr != 0 || offset != 0)
+    return -1;
+
+  if((prot & PROT_WRITE) &&  (flags == MAP_SHARED) && (!f->writable))
+    return -1;
+
+  struct proc *p = myproc();
+  for(int i = 0; i < 16; ++i){
+    if(p->vmas[i].valid)
+      continue;
+
+    p->vmas[i].valid = 1;
+    p->vmas[i].addr = p->sz;
+    p->vmas[i].length = PGROUNDUP(length);
+    p->vmas[i].prot = prot;
+    p->vmas[i].flags = flags;
+    p->vmas[i].f = filedup(f);
+
+    p->sz += p->vmas[i].length;
+    return p->vmas[i].addr;
+  }
+  
+  return -1;
+}
+
+uint64
+sys_munmap(void)
+{
+  uint64 addr;
+  int length;
+
+  if(argaddr(0, &addr) < 0 || argint(1, &length) < 0)
+    return -1;
+
+  if(addr % PGSIZE != 0 || length % PGSIZE != 0)
+    return -1;
+  
+  struct proc *p = myproc();
+  for (int i = 0; i < 16; ++i) {
+    if(!p->vmas[i].valid)
+      continue;
+    // Assume munmap will either unmap at the start or at the end of mmap-ed region.
+    if(addr == p->vmas[i].addr || addr + length == p->vmas[i].addr + p->vmas[i].length){
+      if(p->vmas[i].flags == MAP_SHARED && p->vmas[i].f->writable) {
+        begin_op();
+        ilock(p->vmas[i].f->ip);
+        writei(p->vmas[i].f->ip, 1, addr, addr - p->vmas[i].addr, length);
+        iunlock(p->vmas[i].f->ip);
+        end_op();
+      }
+      for(int cur = addr; cur < addr + length; cur += PGSIZE){
+        uvmunmap(p->pagetable, cur, 1, 1);
+      }
+
+      p->vmas[i].length -= length;
+      if(addr == p->vmas[i].addr)
+        p->vmas[i].addr += length;
+
+      if(p->vmas[i].length == 0){
+        p->vmas[i].valid = 0;
+        p->vmas[i].addr = 0;
+        p->vmas[i].prot = 0;
+        p->vmas[i].flags = 0;
+        fileclose(p->vmas[i].f);
+        p->vmas[i].f = 0;
+      }
+      return 0;
+    }
+  }
+
+  return -1;
+}
